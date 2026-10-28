@@ -1,0 +1,122 @@
+# Paste a YouTube link into input_text.youtube_url: MeTube downloads it at 360p (H.264/AAC MP4)
+# into /media/youtube and the DLNA renderer plays it. The previous download is deleted first,
+# so only one video is kept. A t= timestamp makes MeTube download from that point, because
+# the renderer can't seek.
+#
+# Change before use:
+#   - player: your DLNA renderer's media_player entity
+#   - esphome.ks_kitchen_tablet_notification: your Kiosk Satellite node's notification action
+#     (or delete those steps if you don't use Kiosk Satellite)
+alias: "YouTube to DLNA"
+mode: restart
+triggers:
+  - trigger: state
+    entity_id: input_text.youtube_url
+    not_to: ["", "unknown", "unavailable"]
+variables:
+  player: media_player.kitchen_tablet_dlna
+  url: "{{ trigger.to_state.state | trim }}"
+  video_id: >-
+    {% set m = url | regex_findall('(?:[?&]v=|youtu\\.be/|/shorts/|/embed/|/live/)([A-Za-z0-9_-]{11})') %}{{ m[0] if m else '' }}
+  start_s: >-
+    {% set t = url | regex_findall('[?&#]t=([0-9hms]+)') %}
+    {% set ns = namespace(s=0) %}
+    {% for n, u in (t[0] if t else '') | regex_findall('([0-9]+)([hms]?)') %}
+      {% set ns.s = ns.s + (n | int) * {'h': 3600, 'm': 60, 's': 1, '': 1}[u] %}
+    {% endfor %}{{ ns.s }}
+actions:
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.youtube_url
+    data:
+      value: ""
+  - if: "{{ video_id == '' }}"
+    then:
+      - action: esphome.ks_kitchen_tablet_notification
+        data: &card
+          message: "That isn't a YouTube video link."
+          title: YouTube
+          duration: 10
+          type: warning
+          chime: false
+          scale: 1
+          icon: mdi:youtube
+          chime_file: ""
+          volume: 0
+          image: ""
+      - stop: Not a YouTube video link
+  - action: esphome.ks_kitchen_tablet_notification
+    data:
+      <<: *card
+      message: Loading video…
+      duration: 15
+      type: info
+  # Title and channel for the card; the video still plays if this fails.
+  - action: rest_command.youtube_oembed
+    data:
+      video_id: "{{ video_id }}"
+    response_variable: oembed
+    continue_on_error: true
+  - variables:
+      info: >-
+        {{ oembed.content if oembed is defined and oembed.status == 200 and oembed.content is mapping else {} }}
+  # The card shows the channel from here ("<video id>|<channel>").
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.youtube_now_playing
+    data:
+      value: "{{ video_id }}|{{ info.author_name | default('') | truncate(200, true, '') }}"
+  # One video at a time: drop the previous download and its file.
+  - action: rest_command.metube_history
+    response_variable: history
+  - variables:
+      old_ids: "{{ (history.content | from_json).done | map(attribute='url') | list }}"
+  - if: "{{ old_ids | count > 0 }}"
+    then:
+      - action: rest_command.metube_clear
+        data:
+          ids: "{{ old_ids }}"
+  - action: rest_command.metube_add
+    data:
+      video_id: "{{ video_id }}"
+      start_s: "{{ start_s | int }}"
+    response_variable: added
+  - if: "{{ added.status != 200 or '\"ok\"' not in added.content }}"
+    then:
+      - action: esphome.ks_kitchen_tablet_notification
+        data:
+          <<: *card
+          message: "MeTube didn't accept the video: {{ added.content | truncate(120) }}"
+          type: error
+      - stop: MeTube refused the download
+  # Wait for MeTube to report the download finished or failed (up to 10 minutes).
+  - variables:
+      item: {}
+  - repeat:
+      sequence:
+        - delay: 3
+        - action: rest_command.metube_history
+          response_variable: history
+        - variables:
+            item: >-
+              {{ (history.content | from_json).done
+                 | selectattr('url', 'search', video_id) | list | first | default({}) }}
+      until: "{{ item.status is defined or repeat.index >= 200 }}"
+  - if: "{{ item.status | default('') != 'finished' }}"
+    then:
+      - action: esphome.ks_kitchen_tablet_notification
+        data:
+          <<: *card
+          message: "Download failed: {{ (item.msg | default('timed out')) | truncate(160) }}"
+          type: error
+          duration: 30
+      - stop: Download failed
+  - action: media_player.play_media
+    target:
+      entity_id: "{{ player }}"
+    data:
+      media_content_id: "media-source://media_source/local/youtube/{{ item.filename }}"
+      media_content_type: video/mp4
+      # Only the title survives the renderer; the card loads the thumbnail itself.
+      extra:
+        title: "{{ info.title | default(item.title) }}"

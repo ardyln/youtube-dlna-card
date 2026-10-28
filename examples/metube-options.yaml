@@ -1,0 +1,12 @@
+# Options for the MeTube app (https://github.com/mauro-midolo/MeTube-Home-Assistant).
+# Files are named by video id so the card can find the thumbnail, one download runs at a time,
+# and yt-dlp updates itself nightly because YouTube changes often.
+audio_dir: /media/youtube/audio
+video_dir: /media/youtube
+output_template: "%(id)s.%(ext)s"
+output_template_playlist: "%(id)s.%(ext)s"
+max_concurrent_downloads: 1
+delete_files: ask
+theme: auto
+log_level: info
+nightly_update_time: "04:30"

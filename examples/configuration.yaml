@@ -1,0 +1,38 @@
+# Add to configuration.yaml (merge into existing input_text: / rest_command: blocks),
+# then restart Home Assistant. Replace 2c1db717-metube with your MeTube app's hostname
+# (Settings > Apps > MeTube > Info, or the slug with "_" replaced by "-").
+
+input_text:
+  youtube_url:
+    name: YouTube link
+    icon: mdi:youtube
+    max: 255
+
+rest_command:
+  # video_id is checked against [A-Za-z0-9_-]{11} by the automation before it gets here.
+  # start_s (seconds, optional) makes MeTube download from that point, since the renderer can't seek.
+  metube_add:
+    url: "http://2c1db717-metube:8081/add"
+    method: POST
+    content_type: application/json
+    payload: >-
+      {"url": "https://www.youtube.com/watch?v={{ video_id }}", "download_type": "video",
+      "codec": "h264", "format": "mp4", "quality": "360"{% if start_s | default(0) | int > 0 %},
+      "clip_start": {{ start_s | int }}{% endif %}}
+  metube_history:
+    url: "http://2c1db717-metube:8081/history"
+    method: GET
+  # YouTube's public oEmbed endpoint: title and channel name for the card.
+  youtube_oembed:
+    url: "https://www.youtube.com/oembed?format=json&url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3D{{ video_id }}"
+    method: GET
+    timeout: 10
+  # Removes finished downloads from MeTube's list and deletes their files.
+  metube_clear:
+    url: "http://2c1db717-metube:8081/delete"
+    method: POST
+    content_type: application/json
+    payload: '{"ids": {{ ids | to_json }}, "where": "done", "delete_files": true}'
+
+# Also create a text helper in the UI (Settings > Devices & services > Helpers):
+#   name "YouTube now playing", max length 255 -> input_text.youtube_now_playing
