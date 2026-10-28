@@ -6,6 +6,13 @@ and the link field.
 
 ![The card playing a video](docs/card.png)
 
+> **Status: personal, unmaintained.** I built this for my own use, as part of my intentional
+> computing setup: one video I chose, on a wall panel, with no feed, recommendations or
+> autoplay. I won't maintain it. The pipeline is fragile by nature. It depends on YouTube not
+> changing, on yt-dlp keeping up when it does, on a third-party MeTube wrapper, and on one
+> renderer's quirks. Expect it to break at some point, and don't expect fixes or replies to
+> issues. It's GPL, so fork it and adapt it to your own setup.
+
 It's the front end of a paste-to-play pipeline: MeTube downloads the video into
 `/media/youtube`, and HA plays the file on the renderer. Nothing on the panel talks to
 YouTube. **[docs/PIPELINE.md](docs/PIPELINE.md)** has the full setup, the reasons for each

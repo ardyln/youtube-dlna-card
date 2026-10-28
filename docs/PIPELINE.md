@@ -10,6 +10,10 @@ ruled out, because on 1 GB it runs the panel out of memory.
 Last verified 2026-10-29 with Home Assistant 2026.10.4, MeTube 2026.10.25 (yt-dlp nightly
 2026.10.26), Kiosk Satellite 2026.10.42.
 
+This is a record of my personal setup for intentional computing, not a maintained project.
+Every link in the chain can break without warning: YouTube, yt-dlp, the MeTube wrapper,
+HA's DLNA integration and the renderer. When one does, I may fix it for myself, or I may not.
+
 ## How it works
 
 ```
