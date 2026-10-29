@@ -19,12 +19,15 @@ HA's DLNA integration and the renderer. When one does, I may fix it for myself, 
 ```
 paste link ──► input_text.youtube_url ──► automation
                                             │ 1. clear the box, show "Loading video…" on the panel
-                                            │ 2. oEmbed: title + channel ──► input_text.youtube_now_playing
-                                            │ 3. MeTube: delete the previous download
-                                            │ 4. MeTube: download <id>.mp4 (360p H.264/AAC, from t= if given)
-                                            │ 5. poll MeTube every 3 s until finished or failed
+                                            │ 2. check the pipeline (MeTube answers? renderer connected?)
+                                            │ 3. oEmbed: title + channel ──► input_text.youtube_now_playing
+                                            │ 4. MeTube: delete the previous download
+                                            │ 5. MeTube: download <id>.mp4 (360p H.264/AAC, from t= if given)
+                                            │ 6. poll MeTube every 3 s until finished or failed
+                                            │ 7. check the pipeline again
                                             ▼
              media-source://media_source/local/youtube/<id>.mp4 ──► DLNA renderer plays it
+                                            │ 8. wait for "playing"; if it doesn't come, reconnect and retry once
 ```
 
 The panel only ever fetches a file from Home Assistant's media folder. It never talks to YouTube.
@@ -62,10 +65,40 @@ serve the finished file to the renderer like any other local media.
 3. **Config.** Add the `input_text` and four `rest_command`s from
    [`examples/configuration.yaml`](../examples/configuration.yaml), create the text helper
    **YouTube now playing** in the UI, and restart HA.
-4. **Automation.** Import [`examples/automation.yaml`](../examples/automation.yaml) and change
+4. **Check script.** Add [`examples/script.yaml`](../examples/script.yaml) as a script with the
+   id `youtube_dlna_check`. If your MeTube app has a different slug, change `metube_app`.
+5. **Automation.** Import [`examples/automation.yaml`](../examples/automation.yaml) and change
    the renderer entity and the Kiosk Satellite notification action at the top.
-5. **Card.** Install this repository's card and add it to a dashboard (see the
+6. **Card.** Install this repository's card and add it to a dashboard (see the
    [README](../README.md)).
+
+## Self-check and repair
+
+Each paste runs `script.youtube_dlna_check` twice: before the download, and again right before
+playing, because the panel can drop off during a long download. The script repairs what it
+safely can and otherwise says why it stopped:
+
+| Problem | What the check does |
+| --- | --- |
+| MeTube's API doesn't answer | Starts the MeTube app (`hassio.app_start`) and waits up to a minute for it |
+| The renderer is `unavailable` | Reloads the renderer's DLNA integration (`homeassistant.reload_config_entry`) and waits up to 30 s |
+| Still broken after that | Stops, and shows the reason as a red card on the panel |
+
+After `play_media`, the automation waits up to 45 s for the renderer to report `playing`. If it
+doesn't, it reconnects the renderer and tries once more before showing an error.
+
+**Why the reload is there.** When the panel's Wi-Fi drops for a few minutes, Kiosk Satellite
+reconnects by itself but HA's DLNA integration can stay `unavailable` indefinitely. On
+2026-10-29 it stayed unavailable for six hours, and every paste in that time downloaded the
+video and then silently did nothing, because HA drops a `play_media` to an unavailable
+entity without an error. Reloading the integration reconnected it within 5 s. That's a
+workaround for an integration that should reconnect by itself. The check makes it automatic
+and visible instead of silent.
+
+Tested 2026-10-29: a normal check, a check with MeTube stopped (restarted it and reported
+`started MeTube` after 23 s), and a full paste-to-play run with both checks and the playback
+confirmation. The renderer branch uses the same reload that fixed the six-hour outage by hand,
+but the renderer wasn't actually down during the test.
 
 ## Behaviour
 
@@ -96,6 +129,11 @@ so the card mostly matters on a phone or another dashboard.
 
 - **Loading never finishes.** Check the MeTube panel in the HA sidebar. The automation trace
   shows how many times it polled.
+- **"The video player on the panel isn't reachable".** The check reloaded the DLNA integration
+  and the renderer still didn't come back, so the panel itself is probably offline or
+  Kiosk Satellite's renderer is off (Settings > DLNA Renderer). The renderer's port can move
+  (2325 is often taken by Kiosk Satellite's own proxy, so it moves to the next port).
+  `http://<panel-ip>:<port>/device.xml` should answer.
 - **Downloads start failing after months of working.** YouTube changed something. MeTube
   updates yt-dlp every night at `nightly_update_time`. Restarting the app updates it at once.
 - **"Entity … does not support action media_seek / media_play_pause".** That's expected with

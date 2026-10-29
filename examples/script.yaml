@@ -1,0 +1,82 @@
+# Save as a script with the id youtube_dlna_check (Settings > Automations & scenes > Scripts >
+# ⋮ > Edit in YAML), or add it under script: in scripts.yaml. Uses hassio.app_start, the
+# current name of what older versions call hassio.addon_start.
+alias: "YouTube to DLNA: check the pipeline"
+description: >-
+  Checks that MeTube answers and that the DLNA renderer is connected, and repairs what it
+  safely can: it starts the MeTube app, or reloads the renderer's DLNA integration, which
+  doesn't always reconnect by itself after the panel's Wi-Fi drops. Responds with
+  {ok, reason, repaired}.
+mode: queued
+fields:
+  player:
+    name: Player
+    description: The DLNA renderer's media_player.
+    required: true
+    selector:
+      entity:
+        domain: media_player
+  metube_app:
+    name: MeTube app
+    description: MeTube's app slug, used to start it when it doesn't answer.
+    default: 2c1db717_metube
+    selector:
+      text:
+sequence:
+  - variables:
+      repaired: []
+  # MeTube: does its API answer?
+  - action: rest_command.metube_history
+    response_variable: history
+    continue_on_error: true
+  - if: "{{ history is not defined or history.status != 200 }}"
+    then:
+      - action: hassio.app_start
+        data:
+          app: "{{ metube_app | default('2c1db717_metube') }}"
+        continue_on_error: true
+      - repeat:
+          sequence:
+            - delay: 5
+            - action: rest_command.metube_history
+              response_variable: history
+              continue_on_error: true
+          until: "{{ (history is defined and history.status == 200) or repeat.index >= 12 }}"
+      - if: "{{ history is not defined or history.status != 200 }}"
+        then:
+          - variables:
+              result:
+                ok: false
+                reason: "MeTube isn't answering, even after starting it."
+                repaired: []
+          - stop: MeTube isn't answering
+            response_variable: result
+      - variables:
+          repaired: "{{ repaired + ['started MeTube'] }}"
+  # Renderer: connected? If not, reload its integration and wait for it to come back.
+  - if: "{{ is_state(player, 'unavailable') }}"
+    then:
+      - action: homeassistant.reload_config_entry
+        data:
+          entry_id: "{{ config_entry_id(player) }}"
+        continue_on_error: true
+      - wait_template: "{{ not is_state(player, 'unavailable') }}"
+        timeout: 30
+      - if: "{{ is_state(player, 'unavailable') }}"
+        then:
+          - variables:
+              result:
+                ok: false
+                reason: "The video player on the panel isn't reachable. Is the panel online?"
+                repaired: "{{ repaired }}"
+          - stop: Renderer unreachable
+            response_variable: result
+      - variables:
+          repaired: "{{ repaired + ['reconnected the video player'] }}"
+  - variables:
+      result:
+        ok: true
+        reason: ""
+        repaired: "{{ repaired }}"
+  - stop: Pipeline is working
+    response_variable: result

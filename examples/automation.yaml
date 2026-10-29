@@ -3,6 +3,11 @@
 # so only one video is kept. A t= timestamp makes MeTube download from that point, because
 # the renderer can't seek.
 #
+# script.youtube_dlna_check (examples/script.yaml) runs before the download and again before
+# playing: it starts MeTube if it doesn't answer and reloads the renderer's DLNA integration if
+# the renderer has dropped off. After play_media the automation waits for "playing" and, if it
+# doesn't come, reconnects the renderer and tries once more.
+#
 # Change before use:
 #   - player: your DLNA renderer's media_player entity
 #   - esphome.ks_kitchen_tablet_notification: your Kiosk Satellite node's notification action
@@ -24,6 +29,7 @@ variables:
     {% for n, u in (t[0] if t else '') | regex_findall('([0-9]+)([hms]?)') %}
       {% set ns.s = ns.s + (n | int) * {'h': 3600, 'm': 60, 's': 1, '': 1}[u] %}
     {% endfor %}{{ ns.s }}
+conditions: []
 actions:
   - action: input_text.set_value
     target:
@@ -51,6 +57,20 @@ actions:
       message: Loading video…
       duration: 15
       type: info
+  # Is the pipeline working? Starts MeTube or reconnects the renderer if needed.
+  - action: script.youtube_dlna_check
+    data:
+      player: "{{ player }}"
+    response_variable: check
+  - if: "{{ not check.ok }}"
+    then:
+      - action: esphome.ks_kitchen_tablet_notification
+        data:
+          <<: *card
+          message: "{{ check.reason }}"
+          type: error
+          duration: 30
+      - stop: The pipeline isn't working
   # Title and channel for the card; the video still plays if this fails.
   - action: rest_command.youtube_oembed
     data:
@@ -111,12 +131,49 @@ actions:
           type: error
           duration: 30
       - stop: Download failed
-  - action: media_player.play_media
-    target:
-      entity_id: "{{ player }}"
+  # The player can drop off during a long download, so check again right before playing.
+  - action: script.youtube_dlna_check
     data:
-      media_content_id: "media-source://media_source/local/youtube/{{ item.filename }}"
-      media_content_type: video/mp4
-      # Only the title survives the renderer; the card loads the thumbnail itself.
-      extra:
-        title: "{{ info.title | default(item.title) }}"
+      player: "{{ player }}"
+    response_variable: check
+  - if: "{{ not check.ok }}"
+    then:
+      - action: esphome.ks_kitchen_tablet_notification
+        data:
+          <<: *card
+          message: "Downloaded, but {{ check.reason[:1] | lower }}{{ check.reason[1:] }}"
+          type: error
+          duration: 30
+      - stop: The renderer went away during the download
+  # Play, and make sure it really started; if not, reconnect the renderer and try once more.
+  - repeat:
+      sequence:
+        - if: "{{ repeat.index > 1 }}"
+          then:
+            - action: homeassistant.reload_config_entry
+              data:
+                entry_id: "{{ config_entry_id(player) }}"
+              continue_on_error: true
+            - wait_template: "{{ not is_state(player, 'unavailable') }}"
+              timeout: 30
+        - action: media_player.play_media
+          target:
+            entity_id: "{{ player }}"
+          data:
+            media_content_id: "media-source://media_source/local/youtube/{{ item.filename }}"
+            media_content_type: video/mp4
+            # Only the title survives the renderer; the card loads the thumbnail itself.
+            extra:
+              title: "{{ info.title | default(item.title) }}"
+          continue_on_error: true
+        - wait_template: "{{ is_state(player, 'playing') }}"
+          timeout: 45
+      until: "{{ is_state(player, 'playing') or repeat.index >= 2 }}"
+  - if: "{{ not is_state(player, 'playing') }}"
+    then:
+      - action: esphome.ks_kitchen_tablet_notification
+        data:
+          <<: *card
+          message: "The video downloaded, but the player didn't start playing it."
+          type: error
+          duration: 30

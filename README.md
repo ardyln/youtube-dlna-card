@@ -15,7 +15,9 @@ and the link field.
 
 It's the front end of a paste-to-play pipeline: MeTube downloads the video into
 `/media/youtube`, and HA plays the file on the renderer. Nothing on the panel talks to
-YouTube. **[docs/PIPELINE.md](docs/PIPELINE.md)** has the full setup, the reasons for each
+YouTube. Each paste also checks the pipeline first: it starts MeTube if it isn't answering and
+reconnects the renderer if it has dropped off, so a failure shows up as a message instead of
+silence. **[docs/PIPELINE.md](docs/PIPELINE.md)** has the full setup, the reasons for each
 part, and the renderer quirks the card works around.
 
 ## Install
